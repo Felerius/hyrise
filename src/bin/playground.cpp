@@ -12,6 +12,7 @@
 #include "logical_query_plan/projection_node.hpp"
 #include "operators/print.hpp"
 #include "expression/expression_functional.hpp"
+#include "scheduler/operator_task.hpp"
 
 using namespace opossum;  // NOLINT
 using namespace opossum::expression_functional;  // NOLINT
@@ -56,16 +57,18 @@ GROUP BY p_brand, p_type, p_size
   auto s_comment = supplier_table->get_column("s_comment");
 
   auto subselect = PredicateNode::make(like_(s_comment, "%Customer%Complaints%"), supplier_table);
-  auto manual_sql = AggregateNode::make(
-      expression_vector(),
-      expression_vector(count_distinct_(ps_suppkey)),
-      JoinNode::make(
-          JoinMode::Inner,
-          equals_(p_partkey, ps_partkey),
-          part_table,
-          PredicateNode::make(
-              not_in_(ps_suppkey, lqp_select_(subselect)),
-              partsupp_table)));
+  auto manual_sql = ProjectionNode::make(
+      expression_vector(p_partkey),
+      AggregateNode::make(
+          expression_vector(),
+          expression_vector(count_distinct_(ps_suppkey)),
+          JoinNode::make(
+              JoinMode::Inner,
+              equals_(p_partkey, ps_partkey),
+              part_table,
+              PredicateNode::make(
+                  not_in_(ps_suppkey, lqp_select_(subselect)),
+                  partsupp_table))));
 
   lqp_from_sql->print();
   std::cout << '\n';
@@ -73,12 +76,10 @@ GROUP BY p_brand, p_type, p_size
   std::cout << '\n';
   lqp_from_sql_opt->print();
 
-  auto print = [](auto lqp) {
-      auto pqp = LQPTranslator{}.translate_node(lqp);
-      pqp->execute();
-      Print::print(pqp->get_output());
-  };
-
-  print(supplier_table);
-  print(ProjectionNode::make(expression_vector(s_comment), supplier_table));
+  auto pqp = LQPTranslator{}.translate_node(manual_sql);
+  auto tasks = OperatorTask::make_tasks_from_operator(pqp, CleanupTemporaries::Yes);
+  for (auto& task : tasks) {
+    task->schedule();
+  }
+  Print::print(tasks.back()->get_operator()->get_output());
 }
