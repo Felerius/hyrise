@@ -73,12 +73,16 @@ GROUP BY p_brand, p_type, p_size
   std::cout << '\n';
   lqp_from_sql_opt->print();
 
-  auto print = [](auto lqp) {
-      auto pqp = LQPTranslator{}.translate_node(lqp);
-      pqp->execute();
-      Print::print(pqp->get_output());
-  };
+//  auto print = [](auto lqp) {
+//      auto pqp = LQPTranslator{}.translate_node(lqp);
+//      pqp->execute();
+//      Print::print(pqp->get_output());
+//  };
 
-  print(supplier_table);
-  print(ProjectionNode::make(expression_vector(s_comment), supplier_table));
+
+
+  auto pqp = LQPTranslator{}.translate_node(manual_sql);
+  auto tasks = OperatorTask::make_tasks_from_operator(pqp, CleanupTemporaries::Yes);
+  tasks.back()->schedule();
+  Print::print(tasks.back()->get_operator()->get_output());
 }

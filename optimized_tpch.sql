@@ -1,3 +1,5 @@
+-- noinspection SqlNoDataSourceInspectionForFile
+
 -- 16 original
 SELECT
   p_brand, p_type, p_size, count(distinct ps_suppkey) as supplier_cnt

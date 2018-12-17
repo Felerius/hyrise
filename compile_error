@@ -1,0 +1,30 @@
+pascal:~/current_semester/DYOD/hyrise/release-build$ make -j 2
+[  1%] Built target hpinuma_base_s
+[  3%] Built target sqlparser
+[  4%] Built target cqf
+[  6%] Built target tpch_dbgen
+[  6%] Built target TestPlugin
+[  6%] Built target TestNonInstantiablePlugin
+[  9%] Built target benchmark
+[  9%] Built target gtest
+[ 13%] Built target pqxx
+[ 14%] Built target hpinuma_msource_s
+[ 15%] Built target gmock
+-- Checking git... no change.
+[ 15%] Built target AlwaysCheckGit
+[ 15%] Building CXX object src/lib/CMakeFiles/hyrise.dir/operators/join_nested_loop.cpp.o
+[ 15%] Building CXX object src/lib/CMakeFiles/hyrise.dir/operators/sort.cpp.o
+[ 16%] Building CXX object src/lib/CMakeFiles/hyrise.dir/operators/table_scan.cpp.o
+[ 16%] Building CXX object src/lib/CMakeFiles/hyrise.dir/operators/table_scan/abstract_single_column_table_scan_impl.cpp.o
+[ 16%] Building CXX object src/lib/CMakeFiles/hyrise.dir/operators/table_scan/column_between_table_scan_impl.cpp.o
+[ 16%] Building CXX object src/lib/CMakeFiles/hyrise.dir/operators/table_scan/column_is_null_table_scan_impl.cpp.o
+[ 16%] Building CXX object src/lib/CMakeFiles/hyrise.dir/operators/table_scan/column_like_table_scan_impl.cpp.o
+c++: fatal error: Killed signal terminated program cc1plus
+compilation terminated.
+src/lib/CMakeFiles/hyrise.dir/build.make:1158: recipe for target 'src/lib/CMakeFiles/hyrise.dir/operators/join_nested_loop.cpp.o' failed
+make[2]: *** [src/lib/CMakeFiles/hyrise.dir/operators/join_nested_loop.cpp.o] Error 1
+make[2]: *** Waiting for unfinished jobs....
+CMakeFiles/Makefile2:1241: recipe for target 'src/lib/CMakeFiles/hyrise.dir/all' failed
+make[1]: *** [src/lib/CMakeFiles/hyrise.dir/all] Error 2
+Makefile:129: recipe for target 'all' failed
+make: *** [all] Error 2
