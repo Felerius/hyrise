@@ -2,6 +2,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 
 #include "expression/abstract_expression.hpp"
 #include "expression/abstract_predicate_expression.hpp"
@@ -69,9 +70,9 @@ bool uses_correlated_parameters(const std::shared_ptr<AbstractLQPNode>& node,
 // Finds predicate nodes that need to be pulled up because they use correlated parameters. Also finds projection nodes
 // that need to be removed to guarantee that the pulled predicates have access to the required columns.
 template <class ParameterPredicate>
-std::pair<std::set<const std::shared_ptr<PredicateNode>>, std::vector<const std::shared_ptr<ProjectionNode>>>
+std::pair<std::set<std::shared_ptr<PredicateNode>>, std::vector<const std::shared_ptr<ProjectionNode>>>
 prepare_predicate_pull_up(const std::shared_ptr<AbstractLQPNode>& lqp, ParameterPredicate&& is_correlated_parameter) {
-  std::set<const std::shared_ptr<PredicateNode>> predicates_to_pull_up;
+  std::set<std::shared_ptr<PredicateNode>> predicates_to_pull_up;
   std::vector<const std::shared_ptr<ProjectionNode>> projections_found;
   size_t num_projections_to_remove = 0;
 
@@ -109,7 +110,7 @@ prepare_predicate_pull_up(const std::shared_ptr<AbstractLQPNode>& lqp, Parameter
 template <class ParameterPredicate>
 bool contains_unoptimizable_correlated_parameter_usages(
     const std::shared_ptr<AbstractLQPNode>& lqp, ParameterPredicate&& is_correlated_parameter,
-    const std::set<const std::shared_ptr<PredicateNode>> safe_predicates) {
+    const std::set<std::shared_ptr<PredicateNode>> safe_predicates) {
   bool optimizable = true;
   visit_lqp(lqp, [&](const auto& node) {
     if (!optimizable) {
