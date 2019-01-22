@@ -199,7 +199,7 @@ bool InReformulationRule::apply_to(const std::shared_ptr<AbstractLQPNode>& node)
     //   - Inserting a group by over all columns from the left subtree, to filter out duplicates introduced by the join
     //
     // NOTE: This only works correctly if the left sub-tree does not contain any duplicates. It also works very wrong
-    // for not in expressions. It is only meant to get the implementation started and to collect some preliminary
+    // for NOT IN expressions. It is only meant to get the implementation started and to collect some preliminary
     // benchmark results.
     //
     // To pull up predicates safely, we need to remove any projections we pull them past, to ensure that the columns
