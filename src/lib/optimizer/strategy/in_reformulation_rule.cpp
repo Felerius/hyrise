@@ -209,7 +209,7 @@ bool InReformulationRule::apply_to(const std::shared_ptr<AbstractLQPNode>& node)
     // Keep track of the root of right tree when removing projections and predicates
     auto right_tree_root = subselect_expression->lqp;
 
-    // Map parameter ids to their respective parameter expression
+    // Map parameter IDs to their respective parameter expression
     std::map<ParameterID, std::shared_ptr<AbstractExpression>> correlated_parameters;
     for (size_t i = 0; i < subselect_expression->parameter_count(); ++i) {
       correlated_parameters.emplace(subselect_expression->parameter_ids[i],
