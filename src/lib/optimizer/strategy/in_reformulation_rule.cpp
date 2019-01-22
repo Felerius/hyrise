@@ -251,7 +251,7 @@ bool InReformulationRule::apply_to(const std::shared_ptr<AbstractLQPNode>& node)
       }
     }
 
-    // Build up replacement lqp described above
+    // Build up replacement LQP described above
     const auto left_columns = predicate_node->left_input()->column_expressions();
     auto distinct_node = AggregateNode::make(left_columns, std::vector<std::shared_ptr<AbstractExpression>>{});
     auto left_only_projection_node = ProjectionNode::make(left_columns);
