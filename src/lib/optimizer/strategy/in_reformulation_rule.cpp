@@ -25,6 +25,7 @@ namespace opossum {
 std::shared_ptr<AbstractLQPNode> remove_from_tree(const std::shared_ptr<AbstractLQPNode>& root,
                                                   const std::shared_ptr<AbstractLQPNode>& to_remove) {
   if (root == to_remove) {
+    // We only remove nodes without a right input (which is asserted by lqp_remove_node)
     auto new_root = root->left_input();
     lqp_remove_node(to_remove);
     return new_root;
