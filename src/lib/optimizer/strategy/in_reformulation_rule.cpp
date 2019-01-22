@@ -184,6 +184,8 @@ bool InReformulationRule::apply_to(const std::shared_ptr<AbstractLQPNode>& node)
     const auto join_node = JoinNode::make(join_mode, join_predicate);
     lqp_replace_node(predicate_node, join_node);
     join_node->set_right_input(subselect_expression->lqp);
+
+    return _apply_to_inputs(join_node);
   } else {
     // For correlated sub-queries, we use multi-predicate semi/anti joins to join on the in-value and any correlated
     // predicate found in the sub-query.
@@ -267,9 +269,9 @@ bool InReformulationRule::apply_to(const std::shared_ptr<AbstractLQPNode>& node)
 
     lqp_insert_node(parent, LQPInputSide::Left, join_node);
     join_node->set_right_input(right_tree_root);
-  }
 
-  return true;
+    return _apply_to_inputs(distinct_node);
+  }
 }
 
 }  // namespace opossum
