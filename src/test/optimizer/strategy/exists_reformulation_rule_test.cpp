@@ -50,6 +50,7 @@ class ExistsReformulationRuleTest : public StrategyBaseTest {
 };
 
 TEST_F(ExistsReformulationRuleTest, SimpleExistsToSemiJoin) {
+  // SELECT * FROM a WHERE EXISTS (FROM b WHERE a.a = b.a)
   const auto parameter = correlated_parameter_(ParameterID{0}, node_table_a_col_a);
 
   // clang-format off
@@ -74,7 +75,35 @@ TEST_F(ExistsReformulationRuleTest, SimpleExistsToSemiJoin) {
   EXPECT_LQP_EQ(actual_lqp, expected_lqp);
 }
 
+TEST_F(ExistsReformulationRuleTest, IgnoreProjection) {
+  // SELECT * FROM a WHERE EXISTS (SELECT b.a FROM b WHERE a.a = b.a)
+  const auto parameter = correlated_parameter_(ParameterID{0}, node_table_a_col_a);
+
+  // clang-format off
+  const auto subselect_lqp =
+      ProjectionNode::make(expression_vector(node_table_b_col_a),
+                           PredicateNode::make(equals_(node_table_b_col_a, parameter),
+                                               node_table_b));
+
+  const auto subselect = lqp_select_(subselect_lqp, std::make_pair(ParameterID{0}, node_table_a_col_a));
+
+  const auto input_lqp =
+      PredicateNode::make(exists_(subselect),
+                          node_table_a);
+
+  const auto expected_lqp =
+      JoinNode::make(JoinMode::Semi, equals_(node_table_a_col_a, node_table_b_col_a),
+                     node_table_a,
+                     node_table_b);
+  // clang-format on
+
+  const auto actual_lqp = StrategyBaseTest::apply_rule(_rule, input_lqp);
+
+  EXPECT_LQP_EQ(actual_lqp, expected_lqp);
+}
+
 TEST_F(ExistsReformulationRuleTest, SimpleNotExistsToAntiJoin) {
+  // SELECT * FROM a WHERE NOT EXISTS (FROM b WHERE a.a = b.a)
   const auto parameter = correlated_parameter_(ParameterID{0}, node_table_a_col_a);
 
   // clang-format off
