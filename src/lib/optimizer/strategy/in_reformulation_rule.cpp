@@ -138,7 +138,7 @@ bool contains_unoptimizable_correlated_parameter_usages(
 std::string InReformulationRule::name() const { return "(Not)In to Join Reformulation Rule"; }
 
 bool InReformulationRule::apply_to(const std::shared_ptr<AbstractLQPNode>& node) const {
-  // Filter out all nodes that are not (not)in predicates
+  // Filter out all nodes that are not (NOT) IN predicates or comparators (=, <, <=, >, >=)
   if (node->type != LQPNodeType::Predicate) {
     return _apply_to_inputs(node);
   }
@@ -149,9 +149,19 @@ bool InReformulationRule::apply_to(const std::shared_ptr<AbstractLQPNode>& node)
     return _apply_to_inputs(node);
   }
 
+  bool in_reformulation = false;
+  bool comparator_reformulation = false;
   const auto predicate_expression = std::static_pointer_cast<AbstractPredicateExpression>(predicate_node_predicate);
-  if (predicate_expression->predicate_condition != PredicateCondition::In &&
-      predicate_expression->predicate_condition != PredicateCondition::NotIn) {
+  if (predicate_expression->predicate_condition == PredicateCondition::In ||
+      predicate_expression->predicate_condition == PredicateCondition::NotIn) {
+    in_reformulation = true;
+  } else if (predicate_expression->predicate_condition == PredicateCondition::Equals ||
+             predicate_expression->predicate_condition == PredicateCondition::LessThan ||
+             predicate_expression->predicate_condition == PredicateCondition::LessThanEquals ||
+             predicate_expression->predicate_condition == PredicateCondition::GreaterThan ||
+             predicate_expression->predicate_condition == PredicateCondition::GreaterThanEquals) {
+    comparator_reformulation = true;
+  } else {
     return _apply_to_inputs(node);
   }
 
