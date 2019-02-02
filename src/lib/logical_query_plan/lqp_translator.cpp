@@ -304,19 +304,15 @@ std::shared_ptr<AbstractOperator> LQPTranslator::_translate_join_node(
   Assert(operator_join_predicate,
          "Couldn't translate join predicate: "s + join_node->join_predicate()->as_column_name());
   
-  std::optional<std::vector<JoinPredicate>> secondary_join_predicates;
-
+  std::vector<JoinPredicate> secondary_join_predicates;
   if (node->node_expressions.size() > 1) {
-    std::vector<JoinPredicate> predicates;
     for (size_t i = 1; i < node->node_expressions.size(); ++i) {
       const auto& secondary_predicate = *join_node->node_expressions[i];
       const auto operator_predicate =
           OperatorJoinPredicate::from_expression(secondary_predicate, *node->left_input(), *node->right_input());
       Assert(operator_join_predicate, "Couldn't translate join predicate: "s + secondary_predicate.as_column_name());
-      predicates.emplace_back(JoinPredicate{operator_predicate->column_ids, operator_predicate->predicate_condition});
+      secondary_join_predicates.emplace_back(JoinPredicate{operator_predicate->column_ids, operator_predicate->predicate_condition});
     }
-
-    secondary_join_predicates = std::move(predicates);
   }
 
   const auto predicate_condition = operator_join_predicate->predicate_condition;
