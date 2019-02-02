@@ -27,7 +27,7 @@ JoinHash::JoinHash(const std::shared_ptr<const AbstractOperator>& left,
                    const std::shared_ptr<const AbstractOperator>& right, const JoinMode mode,
                    const ColumnIDPair& column_ids, const PredicateCondition predicate_condition,
                    const std::optional<size_t>& radix_bits,
-                   const std::optional<std::vector<JoinPredicate>>& additional_join_predicates)
+                   const std::vector<JoinPredicate>& additional_join_predicates)
     : AbstractJoinOperator(OperatorType::JoinHash, left, right, mode, column_ids, predicate_condition),
       _radix_bits(radix_bits),
       _additional_join_predicates(additional_join_predicates) {
@@ -39,7 +39,8 @@ const std::string JoinHash::name() const { return "JoinHash"; }
 std::shared_ptr<AbstractOperator> JoinHash::_on_deep_copy(
     const std::shared_ptr<AbstractOperator>& copied_input_left,
     const std::shared_ptr<AbstractOperator>& copied_input_right) const {
-  return std::make_shared<JoinHash>(copied_input_left, copied_input_right, _mode, _column_ids, _predicate_condition);
+  return std::make_shared<JoinHash>(copied_input_left, copied_input_right, _mode, _column_ids, _predicate_condition,
+      _radix_bits, _additional_join_predicates);
 }
 
 void JoinHash::_on_set_parameters(const std::unordered_map<ParameterID, AllTypeVariant>& parameters) {}
@@ -60,6 +61,7 @@ std::shared_ptr<const Table> JoinHash::_on_execute() {
     inputs_swapped = true;
   }
 
+
   if (inputs_swapped) {
     // luckily we don't have to swap the operation itself here, because we only support the commutative Equi Join.
     build_operator = _input_right;
@@ -73,6 +75,18 @@ std::shared_ptr<const Table> JoinHash::_on_execute() {
     probe_column_id = _column_ids.second;
   }
 
+  std::vector<JoinPredicate> additional_join_predicates;
+
+  if (inputs_swapped) {
+    for (const auto& pred : _additional_join_predicates) {
+      additional_join_predicates.emplace_back(
+          JoinPredicate{ColumnIDPair{pred.column_id_pair.second, pred.column_id_pair.first},
+                        flip_predicate_condition(pred.predicate_condition)});
+    }
+  } else {
+    additional_join_predicates = _additional_join_predicates;
+  }
+
   auto adjusted_column_ids = std::make_pair(build_column_id, probe_column_id);
 
   auto build_input = build_operator->get_output();
@@ -81,7 +95,7 @@ std::shared_ptr<const Table> JoinHash::_on_execute() {
   _impl = make_unique_by_data_types<AbstractReadOnlyOperatorImpl, JoinHashImpl>(
       build_input->column_data_type(build_column_id), probe_input->column_data_type(probe_column_id), *this,
       build_operator, probe_operator, _mode, adjusted_column_ids, _predicate_condition, inputs_swapped, _radix_bits,
-      _additional_join_predicates);
+      std::move(additional_join_predicates));
   return _impl->_on_execute();
 }
 
@@ -94,7 +108,7 @@ class JoinHash::JoinHashImpl : public AbstractJoinOperatorImpl {
                const std::shared_ptr<const AbstractOperator>& right, const JoinMode mode,
                const ColumnIDPair& column_ids, const PredicateCondition predicate_condition, const bool inputs_swapped,
                const std::optional<size_t>& radix_bits = std::nullopt,
-               const std::optional<std::vector<JoinPredicate>>& additional_join_predicates = std::nullopt)
+               const std::vector<JoinPredicate>& additional_join_predicates = {})
       : _join_hash(join_hash),
         _left(left),
         _right(right),
@@ -117,7 +131,7 @@ class JoinHash::JoinHashImpl : public AbstractJoinOperatorImpl {
   const ColumnIDPair _column_ids;
   const PredicateCondition _predicate_condition;
   const bool _inputs_swapped;
-  const std::optional<std::vector<JoinPredicate>> _additional_join_predicates;
+  const std::vector<JoinPredicate>& _additional_join_predicates;
 
   std::shared_ptr<Table> _output_table;
 
@@ -305,18 +319,16 @@ class JoinHash::JoinHashImpl : public AbstractJoinOperatorImpl {
     The workers for each radix partition P should be scheduled on the same node as the input data:
     leftP, rightP and hashtableP.
     */
-    const auto& join_pred_vector =
-        _additional_join_predicates.has_value() ? _additional_join_predicates.value() : std::vector<JoinPredicate>{};
     if (_mode == JoinMode::Semi || _mode == JoinMode::Anti) {
       probe_semi_anti<RightType, HashedType>(radix_right, hashtables, right_pos_lists, _mode, *left_in_table,
-                                             *right_in_table, join_pred_vector);
+                                             *right_in_table, _additional_join_predicates);
     } else {
       if (_mode == JoinMode::Left || _mode == JoinMode::Right) {
         probe<RightType, HashedType, true>(radix_right, hashtables, left_pos_lists, right_pos_lists, _mode,
-                                           *left_in_table, *right_in_table, join_pred_vector);
+                                           *left_in_table, *right_in_table, _additional_join_predicates);
       } else {
         probe<RightType, HashedType, false>(radix_right, hashtables, left_pos_lists, right_pos_lists, _mode,
-                                            *left_in_table, *right_in_table, join_pred_vector);
+                                            *left_in_table, *right_in_table, _additional_join_predicates);
       }
     }
 
