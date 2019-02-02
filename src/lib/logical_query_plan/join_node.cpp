@@ -29,11 +29,18 @@ JoinNode::JoinNode(const JoinMode join_mode, const std::shared_ptr<AbstractExpre
   Assert(join_mode != JoinMode::Cross, "Cross Joins take no predicate");
 }
 
+JoinNode::JoinNode(const JoinMode join_mode, const std::vector<std::shared_ptr<AbstractExpression>>& join_predicates)
+    : AbstractLQPNode(LQPNodeType::Join, join_predicates), join_mode(join_mode) {
+  Assert(join_mode != JoinMode::Cross, "Cross Joins take no predicate");
+}
+
 std::string JoinNode::description() const {
   std::stringstream stream;
   stream << "[Join] Mode: " << join_mode_to_string.at(join_mode);
 
-  if (join_predicate()) stream << " " << join_predicate()->as_column_name();
+  for (const auto& predicate : node_expressions) {
+    stream << " " << predicate->as_column_name();
+  }
 
   return stream.str();
 }

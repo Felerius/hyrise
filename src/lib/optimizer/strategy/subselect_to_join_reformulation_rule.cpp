@@ -332,19 +332,13 @@ void SubselectToJoinReformulationRule::apply_to(const std::shared_ptr<AbstractLQ
     return;
   }
 
-  // We cannot support anti joins right now (see large comment below on multi-predicate joins for the reasons).
-  if (join_mode != JoinMode::Semi) {
-    _apply_to_inputs(node);
-    return;
-  }
-
   //TODO why is estimate_plan_cost not static?
   // Do not reformulate if expected output is small.
   //  if(CostModelLogical().estimate_plan_cost(node) <= Cost{50.0f}){
-  if (node->get_statistics()->row_count() < 150.0f) {
-    _apply_to_inputs(node);
-    return;
-  }
+//  if (node->get_statistics()->row_count() < 150.0f) {
+//    _apply_to_inputs(node);
+//    return;
+//  }
   std::cout << "node cost before in reformulation: " << CostModelLogical().estimate_plan_cost(node) << '\n';
 
   // For correlated sub-queries, we use multi-predicate semi/anti joins to join on correlated predicate found in the
@@ -408,7 +402,8 @@ void SubselectToJoinReformulationRule::apply_to(const std::shared_ptr<AbstractLQ
   // NOTE: This only works correctly if the left sub-tree does not contain any duplicates. It also only works for
   // emulating semi joins, not for anti joins. It is only meant to get the implementation started and to collect some
   // preliminary benchmark results.
-  const auto left_columns = predicate_node->left_input()->column_expressions();
+
+  /*const auto left_columns = predicate_node->left_input()->column_expressions();
   auto distinct_node = AggregateNode::make(left_columns, std::vector<std::shared_ptr<AbstractExpression>>{});
   auto left_only_projection_node = ProjectionNode::make(left_columns);
   const auto join_node = JoinNode::make(JoinMode::Inner, primary_join_predicate);
@@ -424,11 +419,15 @@ void SubselectToJoinReformulationRule::apply_to(const std::shared_ptr<AbstractLQ
   }
 
   lqp_insert_node(parent, LQPInputSide::Left, join_node);
+  join_node->set_right_input(right_tree_root);*/
+  join_predicates.emplace(join_predicates.begin(), primary_join_predicate);
+  const auto join_node = JoinNode::make(join_mode, join_predicates);
+  lqp_replace_node(node, join_node);
   join_node->set_right_input(right_tree_root);
 
-  std::cout << "node cost after in reformulation: " << CostModelLogical().estimate_plan_cost(distinct_node) << '\n';
+  std::cout << "node cost after in reformulation: " << CostModelLogical().estimate_plan_cost(join_node) << '\n';
 
-  _apply_to_inputs(distinct_node);
+  _apply_to_inputs(join_node);
 }
 
 }  // namespace opossum
