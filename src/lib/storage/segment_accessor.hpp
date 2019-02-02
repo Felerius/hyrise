@@ -7,6 +7,7 @@
 #include "resolve_type.hpp"
 #include "storage/base_segment_accessor.hpp"
 #include "storage/reference_segment.hpp"
+#include "storage/value_segment.hpp"
 #include "types.hpp"
 #include "utils/performance_warning.hpp"
 
@@ -20,9 +21,9 @@ namespace opossum {
  *
  */
 template <typename T, typename SegmentType>
-class SegmentAccessor : public BaseSegmentAccessor<T> {
+class SegmentAccessor : public AbstractSegmentAccessor<T> {
  public:
-  explicit SegmentAccessor(const SegmentType& segment) : BaseSegmentAccessor<T>{}, _segment{segment} {}
+  explicit SegmentAccessor(const SegmentType& segment) : AbstractSegmentAccessor<T>{}, _segment{segment} {}
 
   const std::optional<T> access(ChunkOffset offset) const final { return _segment.get_typed_value(offset); }
 
@@ -31,7 +32,29 @@ class SegmentAccessor : public BaseSegmentAccessor<T> {
 };
 
 template <typename T>
-std::unique_ptr<BaseSegmentAccessor<T>> create_segment_accessor(const std::shared_ptr<const BaseSegment>& segment);
+class ValueSegmentAccessor : public AbstractSegmentAccessor<T> {
+ public:
+  explicit ValueSegmentAccessor(const ValueSegment<T>& segment) : AbstractSegmentAccessor<T>{}, _segment{segment} {}
+
+  const std::optional<T> access(ChunkOffset offset) const final { return _segment.get_typed_value(offset); }
+
+  const void* get_void_ptr(ChunkOffset offset) const final {
+    if (_segment.is_null(offset)) {
+      return nullptr;
+    }
+
+    return &(_segment.values()[offset]);
+  }
+
+ protected:
+  const ValueSegment<T>& _segment;
+};
+
+template <typename T>
+std::unique_ptr<AbstractSegmentAccessor<T>> create_segment_accessor(const std::shared_ptr<const BaseSegment>& segment);
+
+template <typename T>
+std::unique_ptr<BaseSegmentAccessor> create_base_segment_accessor(const std::shared_ptr<const BaseSegment>& segment);
 
 /**
  * For ReferenceSegments, we don't use the SegmentAccessor but either the MultipleChunkReferenceSegmentAccessor or the.
@@ -41,7 +64,7 @@ std::unique_ptr<BaseSegmentAccessor<T>> create_segment_accessor(const std::share
  * only once.
  */
 template <typename T>
-class MultipleChunkReferenceSegmentAccessor : public BaseSegmentAccessor<T> {
+class MultipleChunkReferenceSegmentAccessor : public AbstractSegmentAccessor<T> {
  public:
   explicit MultipleChunkReferenceSegmentAccessor(const ReferenceSegment& segment) : _segment{segment} {}
 
@@ -63,7 +86,7 @@ class MultipleChunkReferenceSegmentAccessor : public BaseSegmentAccessor<T> {
 
 // Accessor for ReferenceSegments that reference single chunks - see comment above
 template <typename T>
-class SingleChunkReferenceSegmentAccessor : public BaseSegmentAccessor<T> {
+class SingleChunkReferenceSegmentAccessor : public AbstractSegmentAccessor<T> {
  public:
   explicit SingleChunkReferenceSegmentAccessor(const ReferenceSegment& segment)
       : _segment{segment},
@@ -77,18 +100,23 @@ class SingleChunkReferenceSegmentAccessor : public BaseSegmentAccessor<T> {
     return _accessor->access(referenced_chunk_offset);
   }
 
+  const void* get_void_ptr(ChunkOffset offset) const final {
+    const auto referenced_chunk_offset = (*_segment.pos_list())[offset].chunk_offset;
+    return _accessor->get_void_ptr(referenced_chunk_offset);
+  }
+
  protected:
   const ReferenceSegment& _segment;
   const ChunkID _chunk_id;
-  const std::unique_ptr<BaseSegmentAccessor<T>> _accessor;
+  const std::unique_ptr<AbstractSegmentAccessor<T>> _accessor;
 };
 
 /**
  * Utility method to create a SegmentAccessor for a given BaseSegment.
  */
 template <typename T>
-std::unique_ptr<BaseSegmentAccessor<T>> create_segment_accessor(const std::shared_ptr<const BaseSegment>& segment) {
-  std::unique_ptr<BaseSegmentAccessor<T>> accessor;
+std::unique_ptr<AbstractSegmentAccessor<T>> create_segment_accessor(const std::shared_ptr<const BaseSegment>& segment) {
+  std::unique_ptr<AbstractSegmentAccessor<T>> accessor;
   resolve_segment_type<T>(*segment, [&](const auto& typed_segment) {
     using SegmentType = std::decay_t<decltype(typed_segment)>;
     if constexpr (std::is_same_v<SegmentType, ReferenceSegment>) {
@@ -97,11 +125,20 @@ std::unique_ptr<BaseSegmentAccessor<T>> create_segment_accessor(const std::share
       } else {
         accessor = std::make_unique<MultipleChunkReferenceSegmentAccessor<T>>(typed_segment);
       }
+    } else if constexpr (std::is_same_v<SegmentType, ValueSegment<T>>) {
+      accessor = std::make_unique<ValueSegmentAccessor<T>>(typed_segment);
     } else {
       accessor = std::make_unique<SegmentAccessor<T, SegmentType>>(typed_segment);
     }
   });
   return accessor;
+}
+
+template <typename T>
+std::unique_ptr<BaseSegmentAccessor> create_base_segment_accessor(const std::shared_ptr<const BaseSegment>& segment) {
+  // const auto typed_segment_accessor = create_segment_accessor<T>(segment);
+  // return std::unique_ptr<BaseSegmentAccessor> {static_cast<BaseSegmentAccessor*>(typed_segment_accessor.release())};
+  return create_segment_accessor<T>(segment);
 }
 
 }  // namespace opossum

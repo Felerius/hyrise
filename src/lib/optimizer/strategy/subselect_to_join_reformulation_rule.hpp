@@ -26,7 +26,7 @@ class AbstractLQPNode;
 class SubselectToJoinReformulationRule : public AbstractRule {
  public:
   std::string name() const override;
-  bool apply_to(const std::shared_ptr<AbstractLQPNode>& node) const override;
+  void apply_to(const std::shared_ptr<AbstractLQPNode>& node) const override;
 };
 
 }  // namespace opossum

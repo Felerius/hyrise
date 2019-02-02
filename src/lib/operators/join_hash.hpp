@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "abstract_join_operator.hpp"
 #include "types.hpp"
 #include "utils/assert.hpp"
@@ -20,7 +22,8 @@ class JoinHash : public AbstractJoinOperator {
  public:
   JoinHash(const std::shared_ptr<const AbstractOperator>& left, const std::shared_ptr<const AbstractOperator>& right,
            const JoinMode mode, const ColumnIDPair& column_ids, const PredicateCondition predicate_condition,
-           const std::optional<size_t>& radix_bits = std::nullopt);
+           const std::optional<size_t>& radix_bits = std::nullopt,
+           const std::optional<std::vector<JoinPredicate>>& additional_join_predicates = std::nullopt);
 
   const std::string name() const override;
 
@@ -34,6 +37,7 @@ class JoinHash : public AbstractJoinOperator {
 
   std::unique_ptr<AbstractReadOnlyOperatorImpl> _impl;
   const std::optional<size_t> _radix_bits;
+  const std::optional<std::vector<JoinPredicate>> _additional_join_predicates;
 
   template <typename LeftType, typename RightType>
   class JoinHashImpl;

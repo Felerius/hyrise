@@ -4,6 +4,8 @@
 #include <boost/lexical_cast.hpp>
 
 #include "bytell_hash_map.hpp"
+#include "multi_predicate_join_evaluator.hpp"
+#include "operators/multi_predicate_join.hpp"
 #include "resolve_type.hpp"
 #include "scheduler/abstract_task.hpp"
 #include "scheduler/current_scheduler.hpp"
@@ -29,6 +31,7 @@ The original value is used to detect hash collisions.
 template <typename T>
 struct PartitionedElement {
   PartitionedElement() : row_id(NULL_ROW_ID), value(T()) {}
+
   PartitionedElement(RowID row, T val) : row_id(row), value(val) {}
 
   RowID row_id;
@@ -85,8 +88,27 @@ inline std::vector<size_t> determine_chunk_offsets(std::shared_ptr<const Table> 
   return chunk_offsets;
 }
 
+template <typename T>
+std::vector<T> materialize_column(const Table& table, ColumnID column_id) {
+  std::vector<T> col(table.row_count());
+  size_t row_idx = 0;
+
+  for (ChunkID chunk_id{0}; chunk_id < table.chunk_count(); ++chunk_id) {
+    auto segment = table.get_chunk(chunk_id)->get_segment(column_id);
+
+    resolve_segment_type<T>(*segment, [&, chunk_id](auto& typed_segment) {
+      auto iterable = create_iterable_from_segment<T>(typed_segment);
+
+      iterable.for_each([&, chunk_id](const auto& value) { col[row_idx++] = value; });
+    });
+  }
+
+  return col;
+}
+
 template <typename T, typename HashedType, bool consider_null_values>
 RadixContainer<T> materialize_input(const std::shared_ptr<const Table>& in_table, ColumnID column_id,
+                                    const std::vector<size_t>& chunk_offsets,
                                     std::vector<std::vector<size_t>>& histograms, const size_t radix_bits) {
   const std::hash<HashedType> hash_function;
   // list of all elements that will be partitioned
@@ -103,19 +125,6 @@ RadixContainer<T> materialize_input(const std::shared_ptr<const Table>& in_table
   // currently, we just do one pass
   size_t pass = 0;
   size_t mask = static_cast<uint32_t>(pow(2, radix_bits * (pass + 1)) - 1);
-
-  auto chunk_offsets = std::vector<size_t>(in_table->chunk_count());
-
-  // fill work queue
-  {
-    size_t output_offset = 0;
-    for (ChunkID chunk_id{0}; chunk_id < in_table->chunk_count(); chunk_id++) {
-      auto segment = in_table->get_chunk(chunk_id)->get_segment(column_id);
-
-      chunk_offsets[chunk_id] = output_offset;
-      output_offset += segment->size();
-    }
-  }
 
   // create histograms per chunk
   histograms.resize(chunk_offsets.size());
@@ -356,9 +365,12 @@ RadixContainer<T> partition_radix_parallel(const RadixContainer<T>& radix_contai
 template <typename RightType, typename HashedType, bool consider_null_values>
 void probe(const RadixContainer<RightType>& radix_container,
            const std::vector<std::optional<HashTable<HashedType>>>& hashtables, std::vector<PosList>& pos_lists_left,
-           std::vector<PosList>& pos_lists_right, const JoinMode mode) {
+           std::vector<PosList>& pos_lists_right, const JoinMode mode, const Table& left, const Table& right,
+           const std::vector<JoinPredicate>& additional_join_predicates) {
   std::vector<std::shared_ptr<AbstractTask>> jobs;
   jobs.reserve(radix_container.partition_offsets.size());
+
+  MultiPredicateJoinEvaluator mpje(left, right, additional_join_predicates);
 
   /*
     NUMA notes:
@@ -401,15 +413,15 @@ void probe(const RadixContainer<RightType>& radix_container,
         pos_list_right_local.reserve(static_cast<size_t>(expected_output_size));
 
         for (size_t partition_offset = partition_begin; partition_offset < partition_end; ++partition_offset) {
-          auto& row = partition[partition_offset];
+          auto& right_row = partition[partition_offset];
 
-          if (mode == JoinMode::Inner && row.row_id == NULL_ROW_ID) {
+          if (mode == JoinMode::Inner && right_row.row_id == NULL_ROW_ID) {
             // From previous joins, we could potentially have NULL values that do not refer to
-            // an actual row but to the NULL_ROW_ID. Hence, we can only skip for inner joins.
+            // an actual right_row but to the NULL_ROW_ID. Hence, we can only skip for inner joins.
             continue;
           }
 
-          const auto& rows_iter = hashtable.find(type_cast<HashedType>(row.value));
+          const auto& rows_iter = hashtable.find(type_cast<HashedType>(right_row.value));
 
           if (rows_iter != hashtable.end()) {
             // Key exists, thus we have at least one hit
@@ -419,23 +431,36 @@ void probe(const RadixContainer<RightType>& radix_container,
             // we need to the check the NULL bit vector here because a NULL value (represented
             // as a zero) yields the same rows as an actual zero value.
             // For inner joins, we skip NULL values and output them for outer joins.
-            // Note, if the materialization/radix partitioning phase did not explicitely consider
+            // Note, if the materialization/radix partitioning phase did not explicitly consider
             // NULL values, they will not be handed to the probe function.
             if constexpr (consider_null_values) {
               if ((*radix_container.null_value_bitvector)[partition_offset]) {
                 if (mode == JoinMode::Left || mode == JoinMode::Right) {
                   pos_list_left_local.emplace_back(NULL_ROW_ID);
-                  pos_list_right_local.emplace_back(row.row_id);
+                  pos_list_right_local.emplace_back(right_row.row_id);
                 }
                 // ignore found matches and continue with next probe item
                 continue;
               }
             }
 
-            // If NULL values are discarded, the matching row pairs will be written to the result pos lists.
+            // If NULL values are discarded, the matching right_row pairs will be written to the result pos lists.
             for (const auto& row_id : matching_rows) {
-              pos_list_left_local.emplace_back(row_id);
-              pos_list_right_local.emplace_back(row.row_id);
+              // Are all Join Predicates satisfied?
+              // Take the right table and get all accessors.
+              // Take the left table and get all accessors.
+              // Use the accessors to get the values.
+              // Using MultiPredicateJoinEvaluator:
+              //  - Input: both tables and the additional join predicates
+              //  - creates the accessors and manages them
+              // fetch left row(row_id)
+              // fetch right row(row_id)
+              // compare (-1, 0, 1)
+
+              if (mpje.fulfills_all_predicates(row_id, right_row.row_id)) {
+                pos_list_left_local.emplace_back(row_id);
+                pos_list_right_local.emplace_back(right_row.row_id);
+              }
             }
           } else {
             // We have not found matching items. Only continue for non-equi join modes.
@@ -445,13 +470,13 @@ void probe(const RadixContainer<RightType>& radix_container,
             if constexpr (consider_null_values) {
               if (mode == JoinMode::Left || mode == JoinMode::Right) {
                 pos_list_left_local.emplace_back(NULL_ROW_ID);
-                pos_list_right_local.emplace_back(row.row_id);
+                pos_list_right_local.emplace_back(right_row.row_id);
               }
             }
           }
         }
       } else {
-        // When there is no hash table, we might still need to handle the values of the right site for left
+        // When there is no hash table, we might still need to handle the values of the right side for left
         // and right joins. We use constexpr to prune this conditional for the equi-join implementation.
         if constexpr (consider_null_values) {
           if (mode == JoinMode::Left || mode == JoinMode::Right) {
@@ -490,9 +515,11 @@ void probe(const RadixContainer<RightType>& radix_container,
 template <typename RightType, typename HashedType>
 void probe_semi_anti(const RadixContainer<RightType>& radix_container,
                      const std::vector<std::optional<HashTable<HashedType>>>& hashtables,
-                     std::vector<PosList>& pos_lists, const JoinMode mode) {
+                     std::vector<PosList>& pos_lists, const JoinMode mode, const Table& left, const Table& right,
+                     const std::vector<JoinPredicate>& additional_join_predicates) {
   std::vector<std::shared_ptr<AbstractTask>> jobs;
   jobs.reserve(radix_container.partition_offsets.size());
+  MultiPredicateJoinEvaluator mpje(left, right, additional_join_predicates);
 
   for (size_t current_partition_id = 0; current_partition_id < radix_container.partition_offsets.size();
        ++current_partition_id) {
@@ -524,7 +551,23 @@ void probe_semi_anti(const RadixContainer<RightType>& radix_container,
           const auto& hashtable = hashtables[current_partition_id].value();
           const auto it = hashtable.find(type_cast<HashedType>(row.value));
 
-          if ((mode == JoinMode::Semi && it != hashtable.end()) || (mode == JoinMode::Anti && it == hashtable.end())) {
+          bool one_row_matches = false;
+
+          if (it != hashtable.end()) {
+
+            const auto &matching_rows = it->second;
+
+            for (const auto &row_id : matching_rows) {
+              if (mpje.fulfills_all_predicates(row_id, row.row_id)) {
+                one_row_matches = true;
+                break;
+              }
+            }
+          }
+
+          if ((mode == JoinMode::Semi && one_row_matches) ||
+              (mode == JoinMode::Anti && it == hashtable.end() &&
+               (!one_row_matches || additional_join_predicates.empty()))) {
             // Semi: found at least one match for this row -> match
             // Anti: no matching rows found -> match
             pos_list_local.emplace_back(row.row_id);
@@ -552,10 +595,16 @@ void probe_semi_anti(const RadixContainer<RightType>& radix_container,
 using PosLists = std::vector<std::shared_ptr<const PosList>>;
 using PosListsBySegment = std::vector<std::shared_ptr<PosLists>>;
 
+/**
+ * Returns a vector where each entry with index i references a PosLists object. The PosLists object
+ * contains the position list of every segment/chunk in column i.
+ * @param input_table
+ */
 // See usage in _on_execute() for doc.
 inline PosListsBySegment setup_pos_lists_by_segment(const std::shared_ptr<const Table>& input_table) {
   DebugAssert(input_table->type() == TableType::References, "Function only works for reference tables");
 
+  // Why do we need this map?
   std::map<PosLists, std::shared_ptr<PosLists>> shared_pos_lists_by_pos_lists;
 
   PosListsBySegment pos_lists_by_segment(input_table->column_count());
@@ -563,18 +612,21 @@ inline PosListsBySegment setup_pos_lists_by_segment(const std::shared_ptr<const 
 
   const auto& input_chunks = input_table->chunks();
 
+  // For every column, for every chunk
   for (ColumnID column_id{0}; column_id < input_table->column_count(); ++column_id) {
     // Get all the input pos lists so that we only have to pointer cast the segments once
     auto pos_list_ptrs = std::make_shared<PosLists>(input_table->chunk_count());
     auto pos_lists_iter = pos_list_ptrs->begin();
 
-    for (ChunkID chunk_id{0}; chunk_id < input_table->chunk_count(); chunk_id++) {
+    // Iterate over every chunk and add the chunks segment with column_id to pos_list_ptrs
+    for (ChunkID chunk_id{0}; chunk_id < input_table->chunk_count(); ++chunk_id) {
       const auto& ref_segment_uncasted = input_chunks[chunk_id]->segments()[column_id];
       const auto ref_segment = std::static_pointer_cast<const ReferenceSegment>(ref_segment_uncasted);
       *pos_lists_iter = ref_segment->pos_list();
       ++pos_lists_iter;
     }
 
+    // pos_list_ptrs contains all position lists to column_id in the
     auto iter = shared_pos_lists_by_pos_lists.emplace(*pos_list_ptrs, pos_list_ptrs).first;
 
     *pos_lists_by_segment_it = iter->second;
@@ -584,15 +636,25 @@ inline PosListsBySegment setup_pos_lists_by_segment(const std::shared_ptr<const 
   return pos_lists_by_segment;
 }
 
+/**
+ *
+ * @param output_segments [out] Vector to which the newly created reference segments will be written.
+ * @param input_table Table which all the position lists reference
+ * @param input_pos_list_ptrs_sptrs_by_segments Contains all position lists to all columns of input table
+ * @param pos_list contains the positions of rows to use from the input table
+ */
 inline void write_output_segments(Segments& output_segments, const std::shared_ptr<const Table>& input_table,
                                   const PosListsBySegment& input_pos_list_ptrs_sptrs_by_segments,
                                   std::shared_ptr<PosList> pos_list) {
+  // Why is this map needed?
   std::map<std::shared_ptr<PosLists>, std::shared_ptr<PosList>> output_pos_list_cache;
 
   // We might use this later, but want to have it outside of the for loop
   std::shared_ptr<Table> dummy_table;
 
   // Add segments from input table to output chunk
+  // for every column for every row in pos_list: get corresponding out of input_pos_list_ptrs_sptrs_by_segments
+  // and add to new_pos_list which is added to output_segments
   for (ColumnID column_id{0}; column_id < input_table->column_count(); ++column_id) {
     if (input_table->type() == TableType::References) {
       if (input_table->chunk_count() > 0) {

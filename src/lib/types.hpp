@@ -179,6 +179,11 @@ enum class PredicateCondition {
   IsNotNull
 };
 
+struct JoinPredicate {
+  const ColumnIDPair column_id_pair;
+  const PredicateCondition predicate_condition;
+};
+
 bool is_binary_predicate_condition(const PredicateCondition predicate_condition);
 
 // ">" becomes "<" etc.

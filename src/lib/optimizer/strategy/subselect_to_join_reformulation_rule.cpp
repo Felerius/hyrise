@@ -255,10 +255,11 @@ std::shared_ptr<AbstractExpression> find_primary_join_predicate(
 
 std::string SubselectToJoinReformulationRule::name() const { return "Sub-select to Join Reformulation Rule"; }
 
-bool SubselectToJoinReformulationRule::apply_to(const std::shared_ptr<AbstractLQPNode>& node) const {
+void SubselectToJoinReformulationRule::apply_to(const std::shared_ptr<AbstractLQPNode>& node) const {
   // Filter out all nodes that are not (NOT)-IN or (NOT)-EXISTS predicates
   if (node->type != LQPNodeType::Predicate) {
-    return _apply_to_inputs(node);
+    _apply_to_inputs(node);
+    return;
   }
 
   const auto predicate_node = std::static_pointer_cast<PredicateNode>(node);
@@ -272,20 +273,23 @@ bool SubselectToJoinReformulationRule::apply_to(const std::shared_ptr<AbstractLQ
     const auto predicate_expression = std::static_pointer_cast<AbstractPredicateExpression>(predicate_node_predicate);
     if (predicate_expression->predicate_condition != PredicateCondition::In &&
         predicate_expression->predicate_condition != PredicateCondition::NotIn) {
-      return _apply_to_inputs(node);
+      _apply_to_inputs(node);
+      return;
     }
 
     const auto in_expression = std::static_pointer_cast<InExpression>(predicate_expression);
     // Only optimize if the set is a sub-select, and not a static list
     if (in_expression->set()->type != ExpressionType::LQPSelect) {
-      return _apply_to_inputs(node);
+      _apply_to_inputs(node);
+      return;
     }
 
     subselect_expression = std::static_pointer_cast<LQPSelectExpression>(in_expression->set());
     // Find the single column that the sub-query should produce and turn it into one of our join predicates.
     const auto right_column_expressions = subselect_expression->lqp->column_expressions();
     if (right_column_expressions.size() != 1) {
-      return _apply_to_inputs(node);
+      _apply_to_inputs(node);
+      return;
     }
 
     auto right_join_expression = right_column_expressions[0];
@@ -294,7 +298,8 @@ bool SubselectToJoinReformulationRule::apply_to(const std::shared_ptr<AbstractLQ
     // only support expressions that are supported by the join implementation.
     if (in_expression->value()->type != ExpressionType::LQPColumn ||
         right_join_expression->type != ExpressionType::LQPColumn) {
-      return _apply_to_inputs(node);
+      _apply_to_inputs(node);
+      return;
     }
 
     join_predicates.emplace_back(std::make_shared<BinaryPredicateExpression>(
@@ -307,33 +312,38 @@ bool SubselectToJoinReformulationRule::apply_to(const std::shared_ptr<AbstractLQ
     // TODO(anybody): According to the source for ExistsExpression this could also be a PQPSelectExpression. Could this
     // be actually be the case here?
     if (exists_sub_select->type != ExpressionType::LQPSelect) {
-      return _apply_to_inputs(node);
+      _apply_to_inputs(node);
+      return;
     }
 
     subselect_expression = std::static_pointer_cast<LQPSelectExpression>(exists_sub_select);
 
     // We cannot optimize uncorrelated exists into a join
     if (!subselect_expression->is_correlated()) {
-      return _apply_to_inputs(node);
+      _apply_to_inputs(node);
+      return;
     }
 
     // TODO(anybody): Could ExistsExpressionType ever have more than two possible values?
     join_mode =
         exists_expression->exists_expression_type == ExistsExpressionType::Exists ? JoinMode::Semi : JoinMode::Anti;
   } else {
-    return _apply_to_inputs(node);
+    _apply_to_inputs(node);
+    return;
   }
 
   // We cannot support anti joins right now (see large comment below on multi-predicate joins for the reasons).
   if (join_mode != JoinMode::Semi) {
-    return _apply_to_inputs(node);
+    _apply_to_inputs(node);
+    return;
   }
 
   //TODO why is estimate_plan_cost not static?
   // Do not reformulate if expected output is small.
   //  if(CostModelLogical().estimate_plan_cost(node) <= Cost{50.0f}){
   if (node->get_statistics()->row_count() < 150.0f) {
-    return _apply_to_inputs(node);
+    _apply_to_inputs(node);
+    return;
   }
   std::cout << "node cost before in reformulation: " << CostModelLogical().estimate_plan_cost(node) << '\n';
 
@@ -362,7 +372,8 @@ bool SubselectToJoinReformulationRule::apply_to(const std::shared_ptr<AbstractLQ
 
   if (contains_unoptimizable_correlated_parameter_usages(right_tree_root, is_correlated_parameter,
                                                          correlated_predicate_nodes)) {
-    return _apply_to_inputs(node);
+    _apply_to_inputs(node);
+    return;
   }
 
   // The reformulation might still fail if there doesn't exist a suitable primary join predicate. Therefore we need to
@@ -375,7 +386,8 @@ bool SubselectToJoinReformulationRule::apply_to(const std::shared_ptr<AbstractLQ
 
   const auto& primary_join_predicate = find_primary_join_predicate(join_predicates);
   if (!primary_join_predicate) {
-    return _apply_to_inputs(node);
+    _apply_to_inputs(node);
+    return;
   }
 
   // Begin altering the LQP. All failure checks need to be finished at this point.
@@ -416,7 +428,7 @@ bool SubselectToJoinReformulationRule::apply_to(const std::shared_ptr<AbstractLQ
 
   std::cout << "node cost after in reformulation: " << CostModelLogical().estimate_plan_cost(distinct_node) << '\n';
 
-  return _apply_to_inputs(distinct_node);
+  _apply_to_inputs(distinct_node);
 }
 
 }  // namespace opossum
