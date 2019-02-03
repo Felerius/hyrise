@@ -369,6 +369,7 @@ void SubselectToJoinReformulationRule::apply_to(const std::shared_ptr<AbstractLQ
       }
 
       subselect_expression = std::static_pointer_cast<LQPSelectExpression>(in_expression->set());
+      comparison_expression = in_expression->value();
       comparison_condition = PredicateCondition::Equals;
       join_mode = in_expression->is_negated() ? JoinMode::Anti : JoinMode::Semi;
     } else if (predicate_condition == PredicateCondition::Equals ||
@@ -443,10 +444,10 @@ void SubselectToJoinReformulationRule::apply_to(const std::shared_ptr<AbstractLQ
   auto right_tree_root = subselect_expression->lqp;
 
   // Do not reformulate if expected output is small.
-  if (node->get_statistics()->row_count() < 150.0f) {
-    _apply_to_inputs(node);
-    return;
-  }
+//  if (node->get_statistics()->row_count() < 150.0f) {
+//    _apply_to_inputs(node);
+//    return;
+//  }
   std::cout << "node cost before in reformulation: " << CostModelLogical().estimate_plan_cost(node) << '\n';
 
   // TODO(anybody): Is this check actually necessary, or is this always true for correlated parameters?
