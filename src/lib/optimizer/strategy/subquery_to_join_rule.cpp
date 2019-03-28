@@ -150,6 +150,12 @@ bool SubqueryToJoinRule::uses_correlated_parameters(
         if (parameter_mapping.find(parameter_expression->parameter_id) != parameter_mapping.end()) {
           is_correlated = true;
         }
+      } else if (sub_expression->type == ExpressionType::LQPSubquery) {
+        const auto& subquery_expression = std::static_pointer_cast<LQPSubqueryExpression>(sub_expression);
+        visit_lqp(subquery_expression->lqp, [&](const auto& sub_node) {
+          is_correlated |= uses_correlated_parameters(sub_node, parameter_mapping);
+          return is_correlated ? LQPVisitation::DoNotVisitInputs : LQPVisitation::VisitInputs;
+        });
       }
 
       return is_correlated ? ExpressionVisitation::DoNotVisitArguments : ExpressionVisitation::VisitArguments;
